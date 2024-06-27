@@ -1,0 +1,65 @@
+# Use the official Node.js image as the base image
+FROM node:lts@sha256:ab71b9da5ba19445dc5bb76bf99c218941db2c4d70ff4de4e0d9ec90920bfe3f
+
+# Install git and postgresql-client
+RUN apt-get update && apt-get install -y git postgresql-client
+
+# Set the working directory inside the container
+WORKDIR /home/node/app
+
+# Clone the repository
+RUN git clone https://github.com/TBD54566975/tbd-examples.git .
+
+# Change to the specific project directory
+WORKDIR /home/node/app/javascript/tbdex-pfi-exemplar
+
+# Install the application dependencies
+RUN npm i
+
+# Create a startup script
+RUN echo '#!/bin/sh\n\
+# Ensure shared directory exists\n\
+mkdir -p /home/node/app/javascript/tbdex-pfi-exemplar/shared\n\
+\n\
+# Delete old files if they exist\n\
+rm -f /home/node/app/javascript/tbdex-pfi-exemplar/shared/issuerDid.txt\n\
+rm -f /home/node/app/javascript/tbdex-pfi-exemplar/shared/pfiDid.txt\n\
+rm -f /home/node/app/javascript/tbdex-pfi-exemplar/shared/signedCredential.txt\n\
+\n\
+npm run server &\n\
+echo "Waiting for database..."\n\
+until PGPASSWORD=tbd psql -h postgresdb -U postgres -d mockpfi -c "SELECT 1" > /dev/null 2>&1; do\n\
+  echo "Waiting for database..."\n\
+  sleep 1\n\
+done\n\
+echo "Database is ready!"\n\
+sleep 5\n\
+\n\
+# Create tables\n\
+PGPASSWORD=tbd psql -h postgresdb -U postgres -d mockpfi << EOF\n\
+CREATE TABLE IF NOT EXISTS offerings (\n\
+  id VARCHAR(255) PRIMARY KEY,\n\
+  payload JSONB NOT NULL\n\
+);\n\
+\n\
+CREATE TABLE IF NOT EXISTS exchanges (\n\
+  id VARCHAR(255) PRIMARY KEY,\n\
+  payload JSONB NOT NULL\n\
+);\n\
+EOF\n\
+\n\
+npm run example-create-issuer\n\
+npm run seed-offerings\n\
+npm run example-create-customer\n\
+npm run example-issue-credential\n\
+\n\
+# Copy generated files to shared volume\n\
+cp issuerDid.txt pfiDid.txt signedCredential.txt /home/node/app/javascript/tbdex-pfi-exemplar/shared/\n\
+\n\
+wait' > /home/node/app/javascript/tbdex-pfi-exemplar/startup.sh
+
+# Make the startup script executable
+RUN chmod +x /home/node/app/javascript/tbdex-pfi-exemplar/startup.sh
+
+EXPOSE 9000
+CMD ["/home/node/app/javascript/tbdex-pfi-exemplar/startup.sh"]
